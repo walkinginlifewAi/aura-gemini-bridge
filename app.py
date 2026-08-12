@@ -108,6 +108,19 @@ def chat_completions():
         )
 
         print(f"[BRIDGE] Response: {resp.status_code}")
+        if resp.status_code == 200 and not is_stream:
+            try:
+                completion = resp.json()
+                choice = (completion.get("choices") or [{}])[0]
+                message = choice.get("message") or {}
+                print(
+                    "[BRIDGE] Completion shape: "
+                    f"finish_reason={choice.get('finish_reason')} "
+                    f"content_length={len(message.get('content') or '')} "
+                    f"tool_calls={len(message.get('tool_calls') or [])}"
+                )
+            except (ValueError, TypeError, AttributeError):
+                print("[BRIDGE] Completion shape unavailable")
         if resp.status_code == 429:
             try:
                 retry_after = max(DEFAULT_RATE_LIMIT_SECONDS, int(resp.headers.get("Retry-After", "0")))
