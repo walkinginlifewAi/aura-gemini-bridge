@@ -90,6 +90,13 @@ def chat_completions():
         # supplied. Letta's default is automatic selection, which Gemini
         # already performs when the field is omitted.
         proxy_body = dict(body)
+        tool_names = [
+            tool.get("function", {}).get("name", "unknown")
+            for tool in (proxy_body.get("tools") or [])
+            if isinstance(tool, dict)
+        ]
+        if tool_names:
+            print(f"[BRIDGE] Tool inventory: count={len(tool_names)} names={','.join(tool_names)}")
         if proxy_body.get("tools") and proxy_body.get("tool_choice") == "auto":
             proxy_body.pop("tool_choice", None)
             print("[BRIDGE] Removed explicit auto tool_choice for Gemini compatibility")
