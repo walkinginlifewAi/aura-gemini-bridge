@@ -85,6 +85,15 @@ def chat_completions():
         model = body.get("model", "gemini-2.5-flash")
         is_stream = body.get("stream", False)
 
+        # Gemini's OpenAI-compatible endpoint can return a malformed empty
+        # function-call completion when explicit "tool_choice": "auto" is
+        # supplied. Letta's default is automatic selection, which Gemini
+        # already performs when the field is omitted.
+        proxy_body = dict(body)
+        if proxy_body.get("tools") and proxy_body.get("tool_choice") == "auto":
+            proxy_body.pop("tool_choice", None)
+            print("[BRIDGE] Removed explicit auto tool_choice for Gemini compatibility")
+
         print(f"[BRIDGE] {model} | messages={len(body.get('messages', []))} | stream={is_stream}")
 
         resp = requests.post(
@@ -93,7 +102,7 @@ def chat_completions():
                 "Authorization": f"Bearer {GEMINI_API_KEY}",
                 "Content-Type": "application/json"
             },
-            json=body,
+            json=proxy_body,
             timeout=180,
             stream=is_stream
         )
