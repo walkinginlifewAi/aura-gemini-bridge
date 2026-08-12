@@ -8,6 +8,8 @@ This allows Letta (and any OpenAI-compatible client) to use Gemini 2.5 Flash
 without needing to configure API keys in the client.
 """
 import os
+import threading
+import time
 import requests
 from flask import Flask, request, jsonify, Response
 
@@ -16,6 +18,11 @@ app = Flask(__name__)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GOOGLE_BRIDGE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 PORT = int(os.environ.get("PORT", 8080))
+MAX_CONCURRENT_REQUESTS = max(1, int(os.environ.get("MAX_CONCURRENT_REQUESTS", "1")))
+DEFAULT_RATE_LIMIT_SECONDS = max(5, int(os.environ.get("DEFAULT_RATE_LIMIT_SECONDS", "60")))
+REQUEST_GATE = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+COOLDOWN_LOCK = threading.Lock()
+COOLDOWN_UNTIL = 0.0
 
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY not set!")
@@ -23,11 +30,15 @@ if not GEMINI_API_KEY:
 
 @app.route("/health", methods=["GET"])
 def health():
+    with COOLDOWN_LOCK:
+        cooldown_seconds = max(0, round(COOLDOWN_UNTIL - time.monotonic()))
     return jsonify({
         "status": "ok",
         "service": "aura-gemini-bridge",
         "key_configured": bool(GEMINI_API_KEY),
-        "bridge": GOOGLE_BRIDGE_URL
+        "bridge": GOOGLE_BRIDGE_URL,
+        "cooldown_seconds": cooldown_seconds,
+        "max_concurrent_requests": MAX_CONCURRENT_REQUESTS,
     })
 
 
@@ -49,6 +60,25 @@ def list_models():
 @app.route("/v1/chat/completions", methods=["POST"])
 def chat_completions():
     """Proxy chat completions to Gemini with injected API key."""
+    global COOLDOWN_UNTIL
+    with COOLDOWN_LOCK:
+        remaining = COOLDOWN_UNTIL - time.monotonic()
+    if remaining > 0:
+        return jsonify({
+            "error": {
+                "message": "Gemini bridge is cooling down after an upstream rate limit. Retry after the stated delay.",
+                "type": "rate_limit_cooldown",
+                "retry_after_seconds": round(remaining),
+            }
+        }), 429
+    if not REQUEST_GATE.acquire(blocking=False):
+        return jsonify({
+            "error": {
+                "message": "Aura is already processing another request. Queue this request instead of retrying immediately.",
+                "type": "bridge_busy",
+                "retry_after_seconds": 15,
+            }
+        }), 429
     try:
         body = request.get_json(force=True)
         model = body.get("model", "gemini-2.5-flash")
@@ -68,6 +98,14 @@ def chat_completions():
         )
 
         print(f"[BRIDGE] Response: {resp.status_code}")
+        if resp.status_code == 429:
+            try:
+                retry_after = max(DEFAULT_RATE_LIMIT_SECONDS, int(resp.headers.get("Retry-After", "0")))
+            except ValueError:
+                retry_after = DEFAULT_RATE_LIMIT_SECONDS
+            with COOLDOWN_LOCK:
+                COOLDOWN_UNTIL = time.monotonic() + retry_after
+            print(f"[BRIDGE] Upstream rate limited; cooldown={retry_after}s; detail={resp.text[:300]}")
 
         if is_stream:
             def generate():
@@ -87,6 +125,8 @@ def chat_completions():
     except Exception as e:
         print(f"[BRIDGE] Error: {e}")
         return jsonify({"error": {"message": str(e), "type": "proxy_error"}}), 500
+    finally:
+        REQUEST_GATE.release()
 
 
 @app.route("/v1/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
