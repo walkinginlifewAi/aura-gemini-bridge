@@ -20,6 +20,7 @@ GOOGLE_BRIDGE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 PORT = int(os.environ.get("PORT", 8080))
 MAX_CONCURRENT_REQUESTS = max(1, int(os.environ.get("MAX_CONCURRENT_REQUESTS", "1")))
 DEFAULT_RATE_LIMIT_SECONDS = max(5, int(os.environ.get("DEFAULT_RATE_LIMIT_SECONDS", "60")))
+QUEUE_WAIT_SECONDS = max(15, int(os.environ.get("QUEUE_WAIT_SECONDS", "210")))
 REQUEST_GATE = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
 COOLDOWN_LOCK = threading.Lock()
 COOLDOWN_UNTIL = 0.0
@@ -71,12 +72,12 @@ def chat_completions():
                 "retry_after_seconds": round(remaining),
             }
         }), 429
-    if not REQUEST_GATE.acquire(blocking=False):
+    if not REQUEST_GATE.acquire(blocking=True, timeout=QUEUE_WAIT_SECONDS):
         return jsonify({
             "error": {
-                "message": "Aura is already processing another request. Queue this request instead of retrying immediately.",
-                "type": "bridge_busy",
-                "retry_after_seconds": 15,
+                "message": "Aura is still processing a queued request. Retry after the stated delay.",
+                "type": "bridge_queue_timeout",
+                "retry_after_seconds": QUEUE_WAIT_SECONDS,
             }
         }), 429
     try:
