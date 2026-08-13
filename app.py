@@ -29,6 +29,24 @@ if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY not set!")
 
 
+def summarize_message_chain(messages):
+    """Return non-sensitive protocol metadata for multi-turn tool diagnostics."""
+    summary = []
+    for index, message in enumerate(messages or []):
+        content = message.get("content")
+        tool_calls = message.get("tool_calls") or []
+        summary.append({
+            "index": index,
+            "role": message.get("role"),
+            "content_type": type(content).__name__ if content is not None else "none",
+            "content_length": len(content) if isinstance(content, str) else 0,
+            "assistant_tool_calls": len(tool_calls),
+            "assistant_tool_ids_present": sum(bool(call.get("id")) for call in tool_calls if isinstance(call, dict)),
+            "tool_result_id_present": bool(message.get("tool_call_id")),
+        })
+    return summary
+
+
 @app.route("/health", methods=["GET"])
 def health():
     with COOLDOWN_LOCK:
@@ -102,6 +120,8 @@ def chat_completions():
             print("[BRIDGE] Removed explicit auto tool_choice for Gemini compatibility")
 
         print(f"[BRIDGE] {model} | messages={len(body.get('messages', []))} | stream={is_stream}")
+        if proxy_body.get("tools") and len(proxy_body.get("messages") or []) > 1:
+            print(f"[BRIDGE] Message chain: {summarize_message_chain(proxy_body.get('messages'))}")
 
         resp = requests.post(
             f"{GOOGLE_BRIDGE_URL}/chat/completions",
