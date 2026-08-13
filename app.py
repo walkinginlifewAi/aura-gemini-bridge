@@ -18,6 +18,7 @@ app = Flask(__name__)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GOOGLE_BRIDGE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 PORT = int(os.environ.get("PORT", 8080))
+BRIDGE_RELEASE = "2026-08-13-protocol-chain"
 MAX_CONCURRENT_REQUESTS = max(1, int(os.environ.get("MAX_CONCURRENT_REQUESTS", "1")))
 DEFAULT_RATE_LIMIT_SECONDS = max(5, int(os.environ.get("DEFAULT_RATE_LIMIT_SECONDS", "60")))
 QUEUE_WAIT_SECONDS = max(15, int(os.environ.get("QUEUE_WAIT_SECONDS", "210")))
@@ -54,6 +55,7 @@ def health():
     return jsonify({
         "status": "ok",
         "service": "aura-gemini-bridge",
+        "release": BRIDGE_RELEASE,
         "key_configured": bool(GEMINI_API_KEY),
         "bridge": GOOGLE_BRIDGE_URL,
         "cooldown_seconds": cooldown_seconds,
